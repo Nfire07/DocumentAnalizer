@@ -4,10 +4,12 @@ import sys
 import pytesseract
 from PIL import Image
 import ollama
-
+import tkinter as tk
+from tkinter import filedialog
+from pdf2image import convert_from_path
 
 OLLAMA_MODEL = "llama3"
-CHAT_DIR = "saved_chats"
+CHAT_DIR = "savings"
 
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -16,18 +18,39 @@ def ensure_chat_dir():
     if not os.path.exists(CHAT_DIR):
         os.makedirs(CHAT_DIR)
 
-def extract_text_from_images(image_paths):
+def select_files(file_type):
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+    
+    if file_type == 'pdf':
+        filetypes = [("PDF Files", "*.pdf")]
+    else:
+        filetypes = [("Images", "*.png;*.jpg;*.jpeg;*.bmp;*.tiff")]
+        
+    files = filedialog.askopenfilenames(title="Select files", filetypes=filetypes)
+    return list(files)
+
+def extract_content(file_paths, lang_code, file_type):
     full_text = ""
     print("Starting OCR processing...")
     
-    for path in image_paths:
+    for path in file_paths:
         clean_path = path.strip()
         if os.path.exists(clean_path):
             try:
                 print(f"Processing: {clean_path}")
-                img = Image.open(clean_path)
-                text = pytesseract.image_to_string(img)
-                full_text += f"\n--- CONTENT FROM {os.path.basename(clean_path)} ---\n{text}\n"
+                
+                if file_type == 'pdf':
+                    images = convert_from_path(clean_path)
+                    for i, img in enumerate(images):
+                        text = pytesseract.image_to_string(img, lang=lang_code)
+                        full_text += f"\n--- CONTENT FROM {os.path.basename(clean_path)} (Page {i+1}) ---\n{text}\n"
+                else:
+                    img = Image.open(clean_path)
+                    text = pytesseract.image_to_string(img, lang=lang_code)
+                    full_text += f"\n--- CONTENT FROM {os.path.basename(clean_path)} ---\n{text}\n"
+                    
             except Exception as e:
                 print(f"Error processing {clean_path}: {e}")
         else:
@@ -63,21 +86,20 @@ def chat_session(history):
     print("Type 'exit' to return to menu.")
     
     while True:
-        user_input = input("\nYou: ")
-        
-        if user_input.lower() == 'exit':
-            break
-        
-        if user_input.lower() == 'save':
-            filename = input("Enter filename to save: ")
-            save_chat(filename, history)
-            continue
-
-        # Append user message
-        history.append({'role': 'user', 'content': user_input})
-        
-        print("AI is thinking...")
         try:
+            user_input = input("\nYou: ")
+            
+            if user_input.lower() == 'exit':
+                break
+            
+            if user_input.lower() == 'save':
+                filename = input("Enter filename to save: ")
+                save_chat(filename, history)
+                continue
+
+            history.append({'role': 'user', 'content': user_input})
+            
+            print("AI is thinking...")
             response_stream = ollama.chat(model=OLLAMA_MODEL, messages=history, stream=True)
             
             print("AI: ", end="", flush=True)
@@ -88,20 +110,40 @@ def chat_session(history):
                 print(content, end="", flush=True)
                 full_response += content
             
-            print() # Newline after response
+            print()
             
-            # Append AI response to history
             history.append({'role': 'assistant', 'content': full_response})
             
+        except KeyboardInterrupt:
+            print("\nInterrupted. Saving skipped. returning to menu...")
+            break
         except Exception as e:
             print(f"Error communicating with Ollama: {e}")
 
 def create_new_session():
-    print("Enter image paths separated by comma (e.g., img1.png, /path/to/img2.jpg):")
-    raw_input = input("> ")
-    paths = raw_input.split(',')
+    print("Select file type:")
+    print("1. Images (PNG, JPG, etc.)")
+    print("2. PDF Document")
     
-    scanned_text = extract_text_from_images(paths)
+    type_choice = input("Select an option: ")
+    file_type = 'pdf' if type_choice == '2' else 'image'
+    
+    print("Opening file selector...")
+    paths = select_files(file_type)
+    
+    if not paths:
+        print("No files selected. Aborting session.")
+        input("Press Enter to continue...")
+        return
+
+    print("Select Document Language for OCR:")
+    print("1. English")
+    print("2. Italian")
+    lang_choice = input("Select an option: ")
+    
+    lang_code = "ita" if lang_choice == '2' else "eng"
+    
+    scanned_text = extract_content(paths, lang_code, file_type)
     
     if not scanned_text.strip():
         print("No text extracted. Aborting session.")
@@ -146,25 +188,29 @@ def load_existing_session():
 
 def main():
     while True:
-        clear_screen()
-        print("=== AI DOCUMENT ASSISTANT ===")
-        print(f"Model: {OLLAMA_MODEL}")
-        print("1. New Session (Scan Images)")
-        print("2. Load Saved Session")
-        print("3. Exit")
-        
-        choice = input("Select an option: ")
-        
-        if choice == '1':
-            create_new_session()
-        elif choice == '2':
-            load_existing_session()
-        elif choice == '3':
-            print("Exiting...")
+        try:
+            clear_screen()
+            print("=== AI DOCUMENT ASSISTANT ===")
+            print(f"Model: {OLLAMA_MODEL}")
+            print("1. New Session")
+            print("2. Load Saved Session")
+            print("3. Exit")
+            
+            choice = input("Select an option: ")
+            
+            if choice == '1':
+                create_new_session()
+            elif choice == '2':
+                load_existing_session()
+            elif choice == '3':
+                print("Exiting...")
+                sys.exit()
+            else:
+                print("Invalid choice. Try again.")
+                input("Press Enter to continue...")
+        except KeyboardInterrupt:
+            print("\n\nExiting application...")
             sys.exit()
-        else:
-            print("Invalid choice. Try again.")
-            input("Press Enter to continue...")
 
 if __name__ == "__main__":
     main()
